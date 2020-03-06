@@ -23,7 +23,7 @@ export type CollisionUniformsType = {|
 
 export type CollisionCircleUniformsType = {|
     'u_matrix': UniformMatrix4f,
-    'u_invMatrix': UniformMatrix4f,
+    'u_inv_matrix': UniformMatrix4f,
     'u_quads': Uniform4fv,
     'u_camera_to_center_distance': Uniform1f,
     'u_viewport_size': Uniform2f
@@ -39,7 +39,7 @@ const collisionUniforms = (context: Context, locations: UniformLocations): Colli
 
 const collisionCircleUniforms = (context: Context, locations: UniformLocations): CollisionCircleUniformsType => ({
     'u_matrix': new UniformMatrix4f(context, locations.u_matrix),
-    'u_invMatrix': new UniformMatrix4f(context, locations.u_invMatrix),
+    'u_inv_matrix': new UniformMatrix4f(context, locations.u_inv_matrix),
     'u_quads': new Uniform4fv(context, locations.u_quads),
     'u_camera_to_center_distance': new Uniform1f(context, locations.u_camera_to_center_distance),
     'u_viewport_size': new Uniform2f(context, locations.u_viewport_size)
@@ -71,7 +71,7 @@ const collisionCircleUniformValues = (
 ): UniformValues<CollisionCircleUniformsType> => {
     return {
         'u_matrix': matrix,
-        'u_invMatrix': invMatrix,
+        'u_inv_matrix': invMatrix,
         'u_quads': quads,
         'u_camera_to_center_distance': transform.cameraToCenterDistance,
         'u_viewport_size': [transform.width, transform.height]
