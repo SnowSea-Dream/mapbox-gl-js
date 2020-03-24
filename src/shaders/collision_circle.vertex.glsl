@@ -1,34 +1,11 @@
-// This shader implements a simple geometry instancing using uniform vector arrays. Per-circle data is stored
-// in u_quads array (circles are rendered as quads) which is then referenced by vertices of different quads.
-//
-// It is possible to deduce all variables required to render sequential quads by using a single incremental
-// index value as the only vertex data. If one quad uses 4 vertices then index of the quad can be found
-// quad_idx = floor(vertex.idx / 4) and vertex_idx = vertex.idx % 4.
-//
-// 1    2   vertex offsets:
-// *----*   0: vec2(-1, -1)
-// |   /|   1: vec2(-1, 1)
-// |  / |   2: vec2(1, 1)
-// | /  |   3: vec2(1, -1)
-// |/   |
-// *----*
-// 0    3
-//
-
-attribute vec2 a_idx;
+attribute vec2 a_pos;
+attribute float a_radius;
+attribute vec2 a_flags;
 
 uniform mat4 u_matrix;
 uniform mat4 u_inv_matrix;
 uniform vec2 u_viewport_size;
 uniform float u_camera_to_center_distance;
-
-// Rendering information of each quad is packed into a single uniform array.
-// NOTE: all values are in screen space (ie. in pixels) already!
-// x: center_x
-// y: center_y
-// z: radius
-// w: collision flag [0, 1]
-uniform vec4 u_quads[64];
 
 varying float v_radius;
 varying vec2 v_extrude;
@@ -48,15 +25,10 @@ vec3 toTilePosition(vec2 screenPos) {
 }
 
 void main() {
-
-    highp float vertexIdx = mod(a_idx.x, 4.0);
-
-    // Get the quad this vertex belongs to
-    vec4 quad = u_quads[int(floor(a_idx.x / 4.0))];
-
-    vec2 quadCenterPos = quad.xy;
-    highp float radius = quad.z;
-    highp float collision = quad.w;
+    vec2 quadCenterPos = a_pos;
+    float radius = a_radius;
+    float collision = a_flags.x;
+    float vertexIdx = a_flags.y;
 
     vec2 quadVertexOffset = vec2(
         mix(-1.0, 1.0, float(vertexIdx >= 2.0)),

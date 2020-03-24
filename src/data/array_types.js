@@ -385,6 +385,46 @@ register('StructArrayLayout2i2i2i12', StructArrayLayout2i2i2i12);
 
 /**
  * Implementation of the StructArray layout:
+ * [0]: Float32[2]
+ * [8]: Float32[1]
+ * [12]: Int16[2]
+ *
+ * @private
+ */
+class StructArrayLayout2f1f2i16 extends StructArray {
+    uint8: Uint8Array;
+    float32: Float32Array;
+    int16: Int16Array;
+
+    _refreshViews() {
+        this.uint8 = new Uint8Array(this.arrayBuffer);
+        this.float32 = new Float32Array(this.arrayBuffer);
+        this.int16 = new Int16Array(this.arrayBuffer);
+    }
+
+    emplaceBack(v0: number, v1: number, v2: number, v3: number, v4: number) {
+        const i = this.length;
+        this.resize(i + 1);
+        return this.emplace(i, v0, v1, v2, v3, v4);
+    }
+
+    emplace(i: number, v0: number, v1: number, v2: number, v3: number, v4: number) {
+        const o4 = i * 4;
+        const o2 = i * 8;
+        this.float32[o4 + 0] = v0;
+        this.float32[o4 + 1] = v1;
+        this.float32[o4 + 2] = v2;
+        this.int16[o2 + 6] = v3;
+        this.int16[o2 + 7] = v4;
+        return i;
+    }
+}
+
+StructArrayLayout2f1f2i16.prototype.bytesPerElement = 16;
+register('StructArrayLayout2f1f2i16', StructArrayLayout2f1f2i16);
+
+/**
+ * Implementation of the StructArray layout:
  * [0]: Uint8[2]
  * [4]: Float32[2]
  *
@@ -1063,6 +1103,7 @@ export {
     StructArrayLayout1ul4,
     StructArrayLayout6i1ul2ui20,
     StructArrayLayout2i2i2i12,
+    StructArrayLayout2f1f2i16,
     StructArrayLayout2ub2f12,
     StructArrayLayout2i2ui3ul3ui2f3ub1ul1i48,
     StructArrayLayout8i15ui1ul4f68,
@@ -1086,7 +1127,7 @@ export {
     StructArrayLayout3f12 as SymbolDynamicLayoutArray,
     StructArrayLayout1ul4 as SymbolOpacityArray,
     StructArrayLayout2i2i2i12 as CollisionBoxLayoutArray,
-    StructArrayLayout2i4 as CollisionCircleLayoutArray,
+    StructArrayLayout2f1f2i16 as CollisionCircleLayoutArray,
     StructArrayLayout2ub2f12 as CollisionVertexArray,
     StructArrayLayout3ui6 as TriangleIndexArray,
     StructArrayLayout2ui4 as LineIndexArray,

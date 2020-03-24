@@ -10,7 +10,7 @@ import StencilMode from '../gl/stencil_mode';
 import CullFaceMode from '../gl/cull_face_mode';
 import {collisionUniformValues, collisionCircleUniformValues} from './program/collision_program';
 
-import {StructArrayLayout2i4, StructArrayLayout3ui6} from '../data/array_types';
+import {StructArrayLayout2i4, StructArrayLayout3ui6, CollisionCircleLayoutArray} from '../data/array_types';
 import {collisionCircleLayout} from '../data/bucket/symbol_attributes';
 import SegmentVector from '../data/segment';
 import {mat4} from 'gl-matrix';
@@ -56,32 +56,10 @@ function drawCollisionDebug(painter: Painter, sourceCache: SourceCache, layer: S
 }
 
 function drawCollisionCircles(painter: Painter, sourceCache: SourceCache, layer: StyleLayer, coords: Array<OverscaledTileID>, translate: [number, number], translateAnchor: 'map' | 'viewport') {
-    // Collision circle rendering is done by using simple shader batching scheme where dynamic properties of
-    // circles are passed to the GPU using shader uniforms. Circles are first encoded into 4-component vectors
-    // (center_x, center_y, radius, flag) and then uploaded in batches as "uniform vec4 u_quads[N]".
-    // Vertex data is just a collection of incremental index values pointing to the quads-array.
-    //
-    // If one quad uses 4 vertices then all required values can be deduced from the index value:
-    //   int quad_idx = int(vertex.idx / 4);
-    //   int corner_idx = int(vertex.idx % 4);
-    //
-    // OpenGL ES 2.0 spec defines that the maximum number of supported vertex uniform vectors (vec4) should be
-    // at least 128. Choosing a safe value 64 for the quad array should leave enough space for rest of the
-    // uniform variables.
-    const maxQuadsPerDrawCall = 64;
 
-    if (!quadVertices) {
-        quadVertices = createQuadVertices(maxQuadsPerDrawCall);
-    }
-    if (!quadTriangles) {
-        quadTriangles = createQuadTriangles(maxQuadsPerDrawCall);
-    }
-
-    const context = painter.context;
-    const quadVertexBuffer = context.createVertexBuffer(quadVertices, collisionCircleLayout.members, true);
-    const quadIndexBuffer = context.createIndexBuffer(quadTriangles, true);
-
-    const quads = new Float32Array(maxQuadsPerDrawCall * 4);
+    let tileBatches = [];
+    let circleCount = 0;
+    let circleOffset = 0;
 
     for (let i = 0; i < coords.length; i++) {
         const coord = coords[i];
@@ -89,9 +67,9 @@ function drawCollisionCircles(painter: Painter, sourceCache: SourceCache, layer:
         const bucket: ?SymbolBucket = (tile.getBucket(layer): any);
         if (!bucket) continue;
 
-        const arr = bucket.collisionCircleArray;
+        const circleArray = bucket.collisionCircleArray;
 
-        if (!arr.length)
+        if (!circleArray.length)
             continue;
 
         let posMatrix = coord.posMatrix;
@@ -103,92 +81,88 @@ function drawCollisionCircles(painter: Painter, sourceCache: SourceCache, layer:
         // We need to know the projection matrix that was used for projecting collision circles to the screen.
         // This might vary between buckets as the symbol placement is a continous process. This matrix is
         // required for transforming points from previous screen space to the current one
-        const batchInvTransform = mat4.create();
-        const batchTransform = posMatrix;
+        const invTransform = mat4.create();
+        const transform = posMatrix;
 
-        mat4.mul(batchInvTransform, bucket.placementInvProjMatrix, painter.transform.glCoordMatrix);
-        mat4.mul(batchInvTransform, batchInvTransform, bucket.placementViewportMatrix);
+        mat4.mul(invTransform, bucket.placementInvProjMatrix, painter.transform.glCoordMatrix);
+        mat4.mul(invTransform, invTransform, bucket.placementViewportMatrix);
 
-        let batchIdx = 0;
-        let quadOffset = 0;
+        tileBatches.push({
+            circleArray,
+            circleOffset,
+            transform,
+            invTransform
+        });
 
-        while (quadOffset < arr.length) {
-            const quadsLeft = arr.length - quadOffset;
-            const quadSpaceInBatch = maxQuadsPerDrawCall - batchIdx;
-            const batchSize = Math.min(quadsLeft, quadSpaceInBatch);
-
-            // Copy collision circles from the bucket array
-            for (let qIdx = quadOffset; qIdx < quadOffset + batchSize; qIdx++) {
-                quads[batchIdx * 4 + 0] = arr.float32[qIdx * 4 + 0]; // width
-                quads[batchIdx * 4 + 1] = arr.float32[qIdx * 4 + 1]; // height
-                quads[batchIdx * 4 + 2] = arr.float32[qIdx * 4 + 2]; // radius
-                quads[batchIdx * 4 + 3] = arr.float32[qIdx * 4 + 3]; // collisionFlag
-                batchIdx++;
-            }
-
-            quadOffset += batchSize;
-
-            if (batchIdx === maxQuadsPerDrawCall) {
-                drawBatch(painter, batchTransform, batchInvTransform, quads, batchIdx, layer.id, quadVertexBuffer, quadIndexBuffer);
-                batchIdx = 0;
-            }
-        }
-
-        // Render the leftover batch
-        if (batchIdx > 0) {
-            drawBatch(painter, batchTransform, batchInvTransform, quads, batchIdx, layer.id, quadVertexBuffer, quadIndexBuffer);
-        }
+        circleCount += circleArray.length;
+        circleOffset = circleCount;
     }
 
-    quadIndexBuffer.destroy();
-    quadVertexBuffer.destroy();
-}
+    if (!tileBatches.length)
+        return;
 
-function drawBatch(painter: Painter, proj: mat4, invPrevProj: mat4, quads: any, numQuads: number, layerId: string, vb: VertexBuffer, ib: IndexBuffer) {
     const context = painter.context;
     const gl = context.gl;
     const circleProgram = painter.useProgram('collisionCircle');
 
-    const uniforms = collisionCircleUniformValues(
-        proj,
-        invPrevProj,
-        quads,
-        painter.transform);
+    // Construct vertex data
+    const vertexData = new CollisionCircleLayoutArray();
+    vertexData.resize(circleCount * 4);
+    vertexData._trim();
 
-    circleProgram.draw(
-        context,
-        gl.TRIANGLES,
-        DepthMode.disabled,
-        StencilMode.disabled,
-        painter.colorModeForRenderPass(),
-        CullFaceMode.disabled,
-        uniforms,
-        layerId,
-        vb,
-        ib,
-        SegmentVector.simpleSegment(0, 0, numQuads * 4, numQuads * 2),
-        null,
-        painter.transform.zoom,
-        null,
-        null,
-        null);
-}
+    let vertexOffset = 0;
 
-function createQuadVertices(quadCount: number): StructArrayLayout2i4 {
-    const vCount = quadCount * 4;
-    const array = new StructArrayLayout2i4();
+    for (const batch of tileBatches) {
+        for (let i = 0; i < batch.circleArray.length; i++) {
+            const circleIdx = i * 4;
+            const x = batch.circleArray.float32[circleIdx + 0];
+            const y = batch.circleArray.float32[circleIdx + 1];
+            const radius = batch.circleArray.float32[circleIdx + 2];
+            const collision = batch.circleArray.float32[circleIdx + 3];
 
-    array.resize(vCount);
-    array._trim();
-
-    // Fill the buffer with an incremental index value (2 per vertex)
-    // [0, 0, 1, 1, 2, 2, 3, 3, 4, 4...]
-    for (let i = 0; i < vCount; i++) {
-        array.int16[i * 2 + 0] = i;
-        array.int16[i * 2 + 1] = i;
+            // 4 floats per vertex, 4 vertices per quad
+            vertexData.emplace(vertexOffset++, x, y, radius, collision, 0);
+            vertexData.emplace(vertexOffset++, x, y, radius, collision, 1);
+            vertexData.emplace(vertexOffset++, x, y, radius, collision, 2);
+            vertexData.emplace(vertexOffset++, x, y, radius, collision, 3);
+        }
+    }
+    if (!quadTriangles || quadTriangles.length < circleCount * 2) {
+        quadTriangles = createQuadTriangles(circleCount);
     }
 
-    return array;
+    const indexBuffer = context.createIndexBuffer(quadTriangles, true);
+    const vertexBuffer = context.createVertexBuffer(vertexData, collisionCircleLayout.members, true);
+
+    // Render batches
+    for (let batch of tileBatches) {
+        const uniforms = collisionCircleUniformValues(
+            batch.transform,
+            batch.invTransform,
+            painter.transform
+        );
+
+        circleProgram.draw(
+            context,
+            gl.TRIANGLES,
+            DepthMode.disabled,
+            StencilMode.disabled,
+            painter.colorModeForRenderPass(),
+            CullFaceMode.disabled,
+            uniforms,
+            layer.id,
+            vertexBuffer,
+            indexBuffer,
+            SegmentVector.simpleSegment(0, batch.circleOffset * 2, batch.circleArray.length * 4, batch.circleArray.length * 2),
+            null,
+            painter.transform.zoom,
+            null,
+            null,
+            null);
+    }
+
+    vertexBuffer.destroy();
+    indexBuffer.destroy();
 }
 
 function createQuadTriangles(quadCount: number): StructArrayLayout3ui6 {
